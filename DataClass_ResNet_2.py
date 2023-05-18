@@ -119,15 +119,16 @@ class ResNet(nn.Module): #inheritance --> can use anything in nn.Module NOT LIKE
 
 def draw_curve(current_epoch):
     x_epoch.append(current_epoch)
-    ax0.plot(x_epoch, loss['train'], 'bo-', label='train')
-    ax0.plot(x_epoch, loss['validation'], 'ro-', label='val')
-    ax1.plot(x_epoch, err['train'], 'bo-', label='train')
-    ax1.plot(x_epoch, err['validation'], 'ro-', label='val')
+    ax0.plot(x_epoch, modelloss['train'], 'bo-', label='train')
+    ax0.plot(x_epoch, modelloss['validation'], 'ro-', label='val')
+    ax1.plot(x_epoch, modelerr['train'], 'bo-', label='train')
+    ax1.plot(x_epoch, modelerr['validation'], 'ro-', label='val')
     if current_epoch == 0:
         ax0.legend()
         ax1.legend()
     fig.savefig('metrics.png')
     
+
 def Accuracy(model, dataloader): #https://blog.paperspace.com/training-validation-and-accuracy-in-pytorch/
     """
     This function computes accuracy
