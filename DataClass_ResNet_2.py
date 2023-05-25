@@ -9,13 +9,13 @@ from torchvision import transforms as T
 from torchvision import models
 from torch.utils.data import Dataset, DataLoader
 import glob
-from astropy.visualization import AsinhStretch
+from astropy.visualization import AsinhStretch, simple_norm
 #import os
 #from torchvision.io import read_image
 from tqdm import tqdm
 
 path = '/n/holystore01/LABS/hernquist_lab/Users/aschechter/z1mocks/'
-stretch = AsinhStretch()
+#stretch = AsinhStretch()
 pad_val = int((256-202)/2)
 BATCH_SIZE = 32
 
@@ -57,10 +57,14 @@ class BinaryMergerDataset(Dataset): #in future: put this in one file and always 
 
     def __getitem__(self, idx):
         img_path = self.images[idx]
+        #print(idx)
         image = np.load(img_path) #keep as np array to normalize
         image = image[:,:,1:4]
         #print('image shape: ', np.shape(image))
         #image = stretch(image)
+        image = image * 1e20 #test to get magnitudes up
+        power = simple_norm(image, 'power', power = 0.1)
+        image = power(image)
         label_file = self.img_labels
         #print('first label call: ', np.shape(label))
         label = label_file[idx]
@@ -103,17 +107,17 @@ def save_checkpoint(model, optimizer, save_path, epoch):
 
 accuracylist = []
 
-train_mergers_dataset = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(train=True), codetest=True)
-train_nonmergers_dataset = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(train=True), codetest=True)
+train_mergers_dataset = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(train=True), codetest=False)
+train_nonmergers_dataset = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(train=True), codetest=False)
 
 train_dataset_full = torch.utils.data.ConcatDataset([train_mergers_dataset, train_nonmergers_dataset])
-train_dataloader = DataLoader(train_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)
+train_dataloader = DataLoader(train_dataset_full, shuffle = False, num_workers = 1, batch_size=BATCH_SIZE)
 
-validation_mergers_dataset = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(train=False), codetest=True)
-validation_nonmergers_dataset = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(train=False), codetest=True)
+validation_mergers_dataset = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(train=False), codetest=False)
+validation_nonmergers_dataset = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(train=False), codetest=False)
 
 validation_dataset_full = torch.utils.data.ConcatDataset([validation_mergers_dataset, validation_nonmergers_dataset])
-validation_dataloader = DataLoader(validation_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)#num workers used to be 4
+validation_dataloader = DataLoader(validation_dataset_full, shuffle = False, num_workers = 1, batch_size=BATCH_SIZE)#num workers used to be 4
 
 #images, labels = next(iter(train_dataloader)) 
 
@@ -136,11 +140,26 @@ class ResNet(nn.Module): #inheritance --> can use anything in nn.Module NOT LIKE
 
     def forward(self, x): #how a datum moves through the net
         x = self.resnet(x) #model already has the sequence - propogate x through the network!
-        print(x)
+        #print(x)
         return x
 
 
+
+# examples = next(iter(train_dataloader))
+
+# for label, img  in enumerate(examples):
+#     single_img = img[0]
+#     img_permuted = single_img.permute(1, 2, 0)
+#     # Convert the tensor to a numpy array
+#     img_np = img_permuted.numpy()
+#     # Plot the image using Matplotlib
+#     plt.imshow(img_np)
+#     plt.axis('off')  # Optional: turn off the axis labels and ticks
+#     plt.show()
+   
+# exit()
 model = ResNet(512, 1, True)
+#print(model.forward(train_dataset_full[1]))
 model = model.to(device)
 model = model.double()
 #print(model)
@@ -148,7 +167,7 @@ model = model.double()
 #tweak model
 #model.features[0] = torch.nn.Conv2d(model.features[0].kernel_sieze, (5,5))
 #model.classifier[6] = torch.nn.Linear(model.classifier[6].in_features, 1)
-print(model)
+#print(model)
 NUM_EPOCHS = 10
 BEST_MODEL_PATH = 'best_model.pth'
 best_accuracy = 0.0
@@ -216,8 +235,8 @@ for epoch in range(NUM_EPOCHS):
         optimizer.step()
         #train_error_count += float(torch.sum(torch.abs(labels - outputs.argmax(1))))
        # print('length of training loss', len(trainingloss))
-        training_epoch_loss = trainingloss / len(train_dataloader.dataset)
-        print(type(training_epoch_loss))
+        training_epoch_loss = trainingloss / len(train_dataloader.dataset) 
+        print('TRAINING LOSS: ', type(training_epoch_loss), training_epoch_loss)
         training_epoch_accuracy = correct_labels_train / len(train_dataloader.dataset)
         modelloss['train'].append(training_epoch_loss)
         modelerr['train'].append(1.0 - training_epoch_accuracy)        
@@ -301,19 +320,19 @@ accuracylist = np.array(accuracylist)
 np.savetxt('/n/home09/aschechter/code/BinaryCNNTesting/PytorchCNNs/accuracy_resnettransfer.txt', accuracylist)
 
 
-## plot training and validation loss
-plt.figure()
-plt.plot(training_epoch_loss, label = 'training')
-plt.plot(validation_epoch_loss, label = 'validation')
-plt.xlabel('epoch')
-plt.ylabel('loss')
-plt.legend()
-plt.savefig('ResNet_loss.png')
+# ## plot training and validation loss
+# plt.figure()
+# plt.plot(training_epoch_loss, label = 'training')
+# plt.plot(validation_epoch_loss, label = 'validation')
+# plt.xlabel('epoch')
+# plt.ylabel('loss')
+# plt.legend()
+# plt.savefig('ResNet_loss.png')
 
-plt.figure()
-plt.plot(np.arange(0,NUM_EPOCHS), training_epoch_accuracy, label = 'training')
-plt.plot(np.arange(0,NUM_EPOCHS), accuracylist, label = 'validation')
-plt.legend()
-plt.xlabel('epoch')
-plt.ylabel('accuracy')
-plt.savefig('ResNet_accuracy.png')
+# plt.figure()
+# plt.plot(np.arange(0,NUM_EPOCHS), training_epoch_accuracy, label = 'training')
+# plt.plot(np.arange(0,NUM_EPOCHS), accuracylist, label = 'validation')
+# plt.legend()
+# plt.xlabel('epoch')
+# plt.ylabel('accuracy')
+# plt.savefig('ResNet_accuracy.png')
