@@ -29,9 +29,11 @@ class BinaryMergerDataset(Dataset): #in future: put this in one file and always 
             if mergers == True:
                 self.images = glob.glob(data_path + 'training/anymergers/allfilters*.npy')
                 self.img_labels = np.load(data_path + 'training/anymergers/mergerlabel.npy')
+                #print('length of file list', len(self.images))
             else:
                 self.images = glob.glob(data_path + 'training/nonmergers/allfilters*.npy')
                 self.img_labels = np.load(data_path + 'training/nonmergers/mergerlabel.npy')
+                #print('length of file list', len(self.images))
         elif self.dataset == 'validation':
             if mergers == True:
                 self.images = glob.glob(data_path + 'validation/anymergers/allfilters*.npy')
@@ -85,10 +87,10 @@ class BinaryMergerDataset(Dataset): #in future: put this in one file and always 
 # test_dataloader = DataLoader(test_data, batch_size=64, shuffle=True)
 
 
-def get_transforms(train=True):
+def get_transforms(aug=True):
     transforms = []
     transforms.append(T.ToTensor())
-    if train == True:
+    if aug == True:
         transforms.append(torch.nn.Sequential(
         T.RandomRotation(30), 
         T.RandomHorizontalFlip(0.5),
@@ -108,14 +110,17 @@ def save_checkpoint(model, optimizer, save_path, epoch):
 
 accuracylist = []
 
-train_mergers_dataset = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(train=True), codetest=True)
-train_nonmergers_dataset = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(train=True), codetest=True)
+train_mergers_dataset_augment = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(aug=True), codetest=True)
+train_nonmergers_dataset_augment = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(aug=True), codetest=True)
 
-train_dataset_full = torch.utils.data.ConcatDataset([train_mergers_dataset, train_nonmergers_dataset])
+train_mergers_dataset_orig = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(aug=False), codetest=True)
+train_nonmergers_dataset_orig = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(aug=False), codetest=True)
+
+train_dataset_full = torch.utils.data.ConcatDataset([train_mergers_dataset_augment, train_nonmergers_dataset_augment, train_mergers_dataset_orig, train_nonmergers_dataset_orig])
 train_dataloader = DataLoader(train_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)
 
-validation_mergers_dataset = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(train=False), codetest=True)
-validation_nonmergers_dataset = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(train=False), codetest=True)
+validation_mergers_dataset = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(aug=False), codetest=True)
+validation_nonmergers_dataset = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(aug=False), codetest=True)
 
 validation_dataset_full = torch.utils.data.ConcatDataset([validation_mergers_dataset, validation_nonmergers_dataset])
 validation_dataloader = DataLoader(validation_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)#num workers used to be 4
@@ -167,7 +172,7 @@ model = model.double()
 #model.features[0] = torch.nn.Conv2d(model.features[0].kernel_sieze, (5,5))
 #model.classifier[6] = torch.nn.Linear(model.classifier[6].in_features, 1)
 #print(model)
-NUM_EPOCHS = 50
+NUM_EPOCHS = 10
 BEST_MODEL_PATH = 'best_model.pth'
 best_accuracy = 0.0
 # training_epoch_loss = []
@@ -192,7 +197,7 @@ fig = plt.figure()
 ax0 = fig.add_subplot(121, title="Loss")
 ax1 = fig.add_subplot(122, title="Accuracy")
 
-optimizer = optim.Adam(model.parameters(), lr=0.0001)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 def draw_curve(current_epoch):
     x_epoch.append(current_epoch)
