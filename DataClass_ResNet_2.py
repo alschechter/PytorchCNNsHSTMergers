@@ -13,6 +13,7 @@ from astropy.visualization import AsinhStretch, simple_norm
 #import os
 #from torchvision.io import read_image
 from tqdm import tqdm
+import pandas as pd
 
 path = '/n/holystore01/LABS/hernquist_lab/Users/aschechter/z1mocks/'
 #stretch = AsinhStretch()
@@ -20,7 +21,7 @@ pad_val = int((256-202)/2)
 BATCH_SIZE = 32
 
 class BinaryMergerDataset(Dataset): #in future: put this in one file and always call it!
-    def __init__(self, data_path, dataset, mergers = True, transform=None, codetest=False):
+    def __init__(self, data_path, dataset, mergers = True, transform=None, codetest=True):
         self.dataset = dataset
         self.mergers = mergers
         self.codetest=codetest
@@ -107,19 +108,17 @@ def save_checkpoint(model, optimizer, save_path, epoch):
 
 accuracylist = []
 
-train_mergers_dataset = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(train=True), codetest=False)
-train_nonmergers_dataset = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(train=True), codetest=False)
+train_mergers_dataset = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(train=True), codetest=True)
+train_nonmergers_dataset = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(train=True), codetest=True)
 
 train_dataset_full = torch.utils.data.ConcatDataset([train_mergers_dataset, train_nonmergers_dataset])
-train_dataloader = DataLoader(train_dataset_full, shuffle = False, num_workers = 1, batch_size=BATCH_SIZE)
+train_dataloader = DataLoader(train_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)
 
-validation_mergers_dataset = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(train=False), codetest=False)
-validation_nonmergers_dataset = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(train=False), codetest=False)
+validation_mergers_dataset = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(train=False), codetest=True)
+validation_nonmergers_dataset = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(train=False), codetest=True)
 
 validation_dataset_full = torch.utils.data.ConcatDataset([validation_mergers_dataset, validation_nonmergers_dataset])
-validation_dataloader = DataLoader(validation_dataset_full, shuffle = False, num_workers = 1, batch_size=BATCH_SIZE)#num workers used to be 4
-
-#images, labels = next(iter(train_dataloader)) 
+validation_dataloader = DataLoader(validation_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)#num workers used to be 4
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -168,7 +167,7 @@ model = model.double()
 #model.features[0] = torch.nn.Conv2d(model.features[0].kernel_sieze, (5,5))
 #model.classifier[6] = torch.nn.Linear(model.classifier[6].in_features, 1)
 #print(model)
-NUM_EPOCHS = 10
+NUM_EPOCHS = 50
 BEST_MODEL_PATH = 'best_model.pth'
 best_accuracy = 0.0
 # training_epoch_loss = []
@@ -184,85 +183,151 @@ best_accuracy = 0.0
 modelloss = {} #loss history
 modelloss['train'] = []
 modelloss['validation'] = []
-modelerr = {} #used later for accuracy
-modelerr['train'] = []
-modelerr['validation'] = []
+modelacc = {} #used later for accuracy
+modelacc['train'] = []
+modelacc['validation'] = []
 x_epoch = []
 
 fig = plt.figure()
-ax0 = fig.add_subplot(121, title="loss")
-ax1 = fig.add_subplot(122, title="top1err")
+ax0 = fig.add_subplot(121, title="Loss")
+ax1 = fig.add_subplot(122, title="Accuracy")
 
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
 def draw_curve(current_epoch):
     x_epoch.append(current_epoch)
+    print('xshape', np.shape(x_epoch))
+    print('yshape', np.shape(modelloss['train']))
     ax0.plot(x_epoch, modelloss['train'], 'bo-', label='train')
     ax0.plot(x_epoch, modelloss['validation'], 'ro-', label='val')
-    ax1.plot(x_epoch, modelerr['train'], 'bo-', label='train')
-    ax1.plot(x_epoch, modelerr['validation'], 'ro-', label='val')
+    ax1.plot(x_epoch, modelacc['train'], 'bo-', label='train')
+    ax1.plot(x_epoch, modelacc['validation'], 'ro-', label='val')
     if current_epoch == 0:
         ax0.legend()
         ax1.legend()
     fig.savefig('metrics.png')
 
-trainingloss = 0.0
-correct_labels_train = 0.0
-valloss = 0.0
-correct_labels_val = 0.0
+# trainingloss = 0.0
+# correct_labels_train = 0.0
+# valloss = 0.0
+# correct_labels_val = 0.0
+columndata = {}
+columndata['accuracy_column'] = []
+columndata['output_column'] = []
+columndata['label_column'] = []
+#from https://neptune.ai/blog/pytorch-loss-functions
+def get_accuracy(pred,original):
 
+    pred = pred.detach().numpy()
+    original = original.numpy()
+    final_pred= []
 
+    for i in range(len(pred)):
+        if pred[i] <= 0.5:
+            final_pred.append(0)
+        if pred[i] >= 0.5:
+            final_pred.append(1)
+    final_pred = np.array(final_pred)
+    count = 0
 
+    for i in range(len(original)):
+        if final_pred[i] == original[i]:
+            count+=1
+            columndata['accuracy_column'].append('yes')
+        else:
+            columndata['accuracy_column'].append('no')
+    return count/len(final_pred)*100
+
+#task from 6/12: make a table of loss value (per epoch), predicted label, and true label for each image
 for epoch in range(NUM_EPOCHS):
-    
+    t_epoch_loss = 0.0
+    v_epoch_loss = 0.0
     #train_error_count = 0.0
     for images, labels in tqdm(iter(train_dataloader)):
         model.train(True) #default is not in training mode - need to tell pytorch to train
+        bs = images.shape[0]         #batch size
         images = images.to(device=device, dtype=torch.float32)
         labels = labels.to(device=device, dtype=torch.float32)
+        #print(labels)
+        #print(images.shape[0])
         #print(images.size())
-        optimizer.zero_grad()
         outputs = model(images.double())
+        for o in range(len(outputs)):
+            columndata['output_column'].append(outputs[o].item())
+            columndata['label_column'].append(labels[o].item())
+        print('np shape output: ', np.shape(outputs))
+        print('.shape output: ', outputs.shape)
+        print(outputs)
         labels = labels.double()
         labels = labels.unsqueeze(1)
+        loss = F.binary_cross_entropy(outputs, labels)
+        optimizer.zero_grad()
         #print(outputs.size())
         #print(labels.size())
-        loss = F.binary_cross_entropy(outputs, labels)
-        # Calculate Loss
-        trainingloss += loss.item() * BATCH_SIZE
-        correct_labels_train += float(torch.sum(outputs == labels.data))
         loss.backward()
         optimizer.step()
+        t_epoch_loss += loss.item() * bs #make the loss a number
+#look at outputs here and what shape I want!   
+    modelacc['train'].append(get_accuracy(outputs, labels))
+    # print('col shapes', np.shape(labels))
+    # #print(columndata)
+    # print(len(columndata['accuracy_column']), len(columndata['label_column']), len(columndata['output_column']))
+    # table = pd.DataFrame.from_dict(columndata)
+    # print(table)
+    # table.to_csv('LossTestingTableTraining.csv') #currently only works for 1 epoch
+
+    print('loss shape', np.shape(loss))
+    modelloss['train'].append(t_epoch_loss)
+    #print('loss.item shape', np.shape(loss.item()))
+    print(modelloss['train'], np.shape(modelloss['train']))
+        # Calculate Loss
+    
+        
+        #trainingloss += loss.item() * BATCH_SIZE
+        #correct_labels_train += float(torch.sum(outputs == labels.data))
         #train_error_count += float(torch.sum(torch.abs(labels - outputs.argmax(1))))
        # print('length of training loss', len(trainingloss))
-        training_epoch_loss = trainingloss / len(train_dataloader.dataset) 
-        print('TRAINING LOSS: ', type(training_epoch_loss), training_epoch_loss)
-        training_epoch_accuracy = correct_labels_train / len(train_dataloader.dataset)
-        modelloss['train'].append(training_epoch_loss)
-        modelerr['train'].append(1.0 - training_epoch_accuracy)        
+    #training_epoch_loss = trainingloss / len(train_dataloader.dataset) 
+    #print('TRAINING LOSS: ', type(training_epoch_loss), training_epoch_loss)
+    print('TRAINING LOSS: ', t_epoch_loss)
+    #training_epoch_accuracy = correct_labels_train / len(train_dataloader.dataset)
+    #modelloss['train'].append(training_epoch_loss)
+   # modelerr['train'].append(1.0 - training_epoch_accuracy)        
     # training_epoch_loss.append(trainingloss)
     # print('shape of training loss: ', np.shape(training_epoch_loss))
     # train_accuracy = 1.0 - float(train_error_count) / float(len(train_dataset_full))
     # training_epoch_accuracy.append(train_accuracy)
     
-    #val_error_count = 0.0
-    for images, labels in iter(validation_dataloader):
-        model.train(False)
-        model.eval() #added 5/13/23
+    # #val_error_count = 0.0
+    model.eval()
+    for images, labels in tqdm(iter(validation_dataloader)):
+        #model.train(False)
+        
+        bs = images.shape[0] 
+        #model.eval() #added 5/13/23
         images = torch.tensor(images, dtype=torch.float32).to(device)
         labels = torch.tensor(labels, dtype=torch.float32).to(device)
+        print('batch size', images.shape[0])
+        print(np.shape(images))
+        print(images[100:100,100:100])
+        print(labels)
         outputs = model(images.double())
+        print(outputs)
         labels = labels.double()
         labels = labels.unsqueeze(1)
         loss = F.binary_cross_entropy(outputs, labels)
+        v_epoch_loss += loss.item() * bs
+    
+    modelacc['validation'].append(get_accuracy(outputs, labels))
+        
         #valloss.append(loss.item())
         #val_error_count += float(torch.sum(torch.abs(labels - outputs.argmax(1))))
-        valloss += loss.item() * BATCH_SIZE
-        correct_labels_val += float(torch.sum(outputs == labels.data))
-        validation_epoch_loss = valloss / len(validation_dataloader.dataset)
-        validation_epoch_accuracy = correct_labels_val / len(validation_dataloader.dataset)
-        modelloss['validation'].append(validation_epoch_loss)
-        modelerr['validation'].append(1.0 - validation_epoch_accuracy) 
+        #valloss += loss.item() * BATCH_SIZE
+        #correct_labels_val += float(torch.sum(outputs == labels.data))
+    #validation_epoch_loss = valloss / len(validation_dataloader.dataset)
+    #validation_epoch_accuracy = correct_labels_val / len(validation_dataloader.dataset)
+    modelloss['validation'].append(v_epoch_loss)
+    #modelerr['validation'].append(1.0 - validation_epoch_accuracy) 
         
     draw_curve(epoch)
     save_checkpoint(model=model, optimizer=optimizer, save_path='/n/home09/aschechter/code/BinaryCNNTesting/PytorchCNNs/savedresnetmodel.txt', epoch = epoch)
@@ -335,4 +400,4 @@ np.savetxt('/n/home09/aschechter/code/BinaryCNNTesting/PytorchCNNs/accuracy_resn
 # plt.legend()
 # plt.xlabel('epoch')
 # plt.ylabel('accuracy')
-# plt.savefig('ResNet_accuracy.png')
+# plt.savefig('ResNet_accuracy.png')stb
