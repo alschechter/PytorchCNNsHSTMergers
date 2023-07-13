@@ -54,7 +54,7 @@ class BinaryMergerDataset(Dataset): #in future: put this in one file and always 
 
     def __len__(self):
         if self.codetest:
-            return len(self.img_labels[0:10])
+            return len(self.img_labels[0:200])
         else:   
             return len(self.img_labels)
 
@@ -119,10 +119,13 @@ train_nonmergers_dataset_orig = BinaryMergerDataset(path, 'train', mergers = Fal
 train_dataset_full = torch.utils.data.ConcatDataset([train_mergers_dataset_augment, train_nonmergers_dataset_augment, train_mergers_dataset_orig, train_nonmergers_dataset_orig])
 train_dataloader = DataLoader(train_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)
 
-validation_mergers_dataset = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(aug=False), codetest=True)
-validation_nonmergers_dataset = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(aug=False), codetest=True)
+validation_mergers_dataset_augment = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(aug=True), codetest=True)
+validation_nonmergers_dataset_augment = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(aug=True), codetest=True)
 
-validation_dataset_full = torch.utils.data.ConcatDataset([validation_mergers_dataset, validation_nonmergers_dataset])
+validation_mergers_dataset_orig = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(aug=False), codetest=True)
+validation_nonmergers_dataset_orig = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(aug=False), codetest=True)
+
+validation_dataset_full = torch.utils.data.ConcatDataset([validation_mergers_dataset_augment, validation_nonmergers_dataset_augment, validation_mergers_dataset_orig, validation_nonmergers_dataset_orig])
 validation_dataloader = DataLoader(validation_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)#num workers used to be 4
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -134,19 +137,32 @@ class ResNet(nn.Module): #inheritance --> can use anything in nn.Module NOT LIKE
     ):
         super().__init__()
         self.resnet = models.resnet18(weights=models.ResNet18_Weights.DEFAULT) #self says "this variable belongs to the class"
-        #print(self.resnet)
-        # Freeze model parameters -- commented out on 5/11/23 to test if that's whats messing with accuracy
+        # print('ORIGINAL RESNET')
+        # print(self.resnet)
+        #from marina:
+                ###vgg_model = VGG16(input_shape=<image input size>,
+                ###  weights="imagenet",
+                ###  include_top=False)
+                #for layer in resnet_model.layers[7:]:
+                #layer.trainable = FalseTrue
+        # Freeze model parameters -- 7/10 look into these lines more! am i allowing weights to vary?
         for param in self.resnet.parameters():
-            param.requires_grad = False
+            param.requires_grad = True
+        # self.my_model = nn.Sequential(*list(self.resnet.children())[:-3])
         #self.resnet.fc = nn.Linear(in_channels, out_channels, bias=True) #bias is like y-intercept #add activation here
         self.resnet.fc = nn.Sequential(torch.nn.Linear(in_channels, out_channels, bias=True), torch.nn.Sigmoid())
-        #print(self.resnet)
+        # self.my_model.avgpool = nn.AdaptiveAvgPool2d(output_size=(1,1))
+        # self.my_model.fc = nn.Sequential(torch.nn.Linear(256, 1, bias=True), torch.nn.Sigmoid())
+        # print('MODIFIED VERSION')
+        # print(self.my_model)
 
     def forward(self, x): #how a datum moves through the net
         x = self.resnet(x) #model already has the sequence - propogate x through the network!
+        #print(self.my_model(x))
         #print(x)
+        #x = self.my_model(x)
+        #print model summary here 
         return x
-
 
 
 # examples = next(iter(train_dataloader))
@@ -166,13 +182,13 @@ model = ResNet(512, 1, True)
 #print(model.forward(train_dataset_full[1]))
 model = model.to(device)
 model = model.double()
-#print(model)
+print(model)
 
 #tweak model
 #model.features[0] = torch.nn.Conv2d(model.features[0].kernel_sieze, (5,5))
 #model.classifier[6] = torch.nn.Linear(model.classifier[6].in_features, 1)
 #print(model)
-NUM_EPOCHS = 10
+NUM_EPOCHS = 50
 BEST_MODEL_PATH = 'best_model.pth'
 best_accuracy = 0.0
 # training_epoch_loss = []
@@ -194,19 +210,19 @@ modelacc['validation'] = []
 x_epoch = []
 
 fig = plt.figure()
-ax0 = fig.add_subplot(121, title="Loss")
-ax1 = fig.add_subplot(122, title="Accuracy")
+ax0 = fig.add_subplot(211, title="Loss")
+ax1 = fig.add_subplot(212, title="Accuracy")
 
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
 def draw_curve(current_epoch):
     x_epoch.append(current_epoch)
     print('xshape', np.shape(x_epoch))
     print('yshape', np.shape(modelloss['train']))
-    ax0.plot(x_epoch, modelloss['train'], 'bo-', label='train')
-    ax0.plot(x_epoch, modelloss['validation'], 'ro-', label='val')
-    ax1.plot(x_epoch, modelacc['train'], 'bo-', label='train')
-    ax1.plot(x_epoch, modelacc['validation'], 'ro-', label='val')
+    ax0.plot(x_epoch, modelloss['train'], 'b', label='train')
+    ax0.plot(x_epoch, modelloss['validation'], 'r', label='val')
+    ax1.plot(x_epoch, modelacc['train'], 'b', label='train')
+    ax1.plot(x_epoch, modelacc['validation'], 'r', label='val')
     if current_epoch == 0:
         ax0.legend()
         ax1.legend()
@@ -223,14 +239,14 @@ columndata['label_column'] = []
 #from https://neptune.ai/blog/pytorch-loss-functions
 def get_accuracy(pred,original):
 
-    pred = pred.detach().numpy()
-    original = original.numpy()
+    pred = pred.cpu().detach().numpy()
+    original = original.cpu().numpy()
     final_pred= []
 
     for i in range(len(pred)):
         if pred[i] <= 0.5:
             final_pred.append(0)
-        if pred[i] >= 0.5:
+        if pred[i] > 0.5:
             final_pred.append(1)
     final_pred = np.array(final_pred)
     count = 0
@@ -247,6 +263,8 @@ def get_accuracy(pred,original):
 for epoch in range(NUM_EPOCHS):
     t_epoch_loss = 0.0
     v_epoch_loss = 0.0
+    t_counter = 0
+    v_counter = 0
     #train_error_count = 0.0
     for images, labels in tqdm(iter(train_dataloader)):
         model.train(True) #default is not in training mode - need to tell pytorch to train
@@ -255,8 +273,9 @@ for epoch in range(NUM_EPOCHS):
         labels = labels.to(device=device, dtype=torch.float32)
         #print(labels)
         #print(images.shape[0])
-        #print(images.size())
+        print(images.size())
         outputs = model(images.double())
+        print('output shape', np.shape(outputs))
         for o in range(len(outputs)):
             columndata['output_column'].append(outputs[o].item())
             columndata['label_column'].append(labels[o].item())
@@ -272,6 +291,7 @@ for epoch in range(NUM_EPOCHS):
         loss.backward()
         optimizer.step()
         t_epoch_loss += loss.item() * bs #make the loss a number
+        t_counter +=1 
 #look at outputs here and what shape I want!   
     modelacc['train'].append(get_accuracy(outputs, labels))
     # print('col shapes', np.shape(labels))
@@ -282,7 +302,7 @@ for epoch in range(NUM_EPOCHS):
     # table.to_csv('LossTestingTableTraining.csv') #currently only works for 1 epoch
 
     print('loss shape', np.shape(loss))
-    modelloss['train'].append(t_epoch_loss)
+    modelloss['train'].append(t_epoch_loss/t_counter)
     #print('loss.item shape', np.shape(loss.item()))
     print(modelloss['train'], np.shape(modelloss['train']))
         # Calculate Loss
@@ -307,7 +327,6 @@ for epoch in range(NUM_EPOCHS):
     model.eval()
     for images, labels in tqdm(iter(validation_dataloader)):
         #model.train(False)
-        
         bs = images.shape[0] 
         #model.eval() #added 5/13/23
         images = torch.tensor(images, dtype=torch.float32).to(device)
@@ -322,6 +341,7 @@ for epoch in range(NUM_EPOCHS):
         labels = labels.unsqueeze(1)
         loss = F.binary_cross_entropy(outputs, labels)
         v_epoch_loss += loss.item() * bs
+        v_counter += 1
     
     modelacc['validation'].append(get_accuracy(outputs, labels))
         
@@ -331,7 +351,7 @@ for epoch in range(NUM_EPOCHS):
         #correct_labels_val += float(torch.sum(outputs == labels.data))
     #validation_epoch_loss = valloss / len(validation_dataloader.dataset)
     #validation_epoch_accuracy = correct_labels_val / len(validation_dataloader.dataset)
-    modelloss['validation'].append(v_epoch_loss)
+    modelloss['validation'].append(v_epoch_loss/v_counter)
     #modelerr['validation'].append(1.0 - validation_epoch_accuracy) 
         
     draw_curve(epoch)
