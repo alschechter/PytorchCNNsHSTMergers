@@ -13,8 +13,10 @@ from astropy.visualization import AsinhStretch, simple_norm
 #import os
 #from torchvision.io import read_image
 from tqdm import tqdm
-import pandas as pd
+#import pandas as pd
+from torchsummary import summary
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 path = '/n/holystore01/LABS/hernquist_lab/Users/aschechter/z1mocks/'
 #stretch = AsinhStretch()
 pad_val = int((256-202)/2)
@@ -110,20 +112,20 @@ def save_checkpoint(model, optimizer, save_path, epoch):
 
 accuracylist = []
 
-train_mergers_dataset_augment = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(aug=True), codetest=True)
-train_nonmergers_dataset_augment = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(aug=True), codetest=True)
+train_mergers_dataset_augment = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(aug=True), codetest=False)
+train_nonmergers_dataset_augment = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(aug=True), codetest=False)
 
-train_mergers_dataset_orig = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(aug=False), codetest=True)
-train_nonmergers_dataset_orig = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(aug=False), codetest=True)
+train_mergers_dataset_orig = BinaryMergerDataset(path, 'train', mergers = True, transform = get_transforms(aug=False), codetest=False)
+train_nonmergers_dataset_orig = BinaryMergerDataset(path, 'train', mergers = False, transform = get_transforms(aug=False), codetest=False)
 
 train_dataset_full = torch.utils.data.ConcatDataset([train_mergers_dataset_augment, train_nonmergers_dataset_augment, train_mergers_dataset_orig, train_nonmergers_dataset_orig])
 train_dataloader = DataLoader(train_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)
 
-validation_mergers_dataset_augment = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(aug=True), codetest=True)
-validation_nonmergers_dataset_augment = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(aug=True), codetest=True)
+validation_mergers_dataset_augment = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(aug=True), codetest=False)
+validation_nonmergers_dataset_augment = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(aug=True), codetest=False)
 
-validation_mergers_dataset_orig = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(aug=False), codetest=True)
-validation_nonmergers_dataset_orig = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(aug=False), codetest=True)
+validation_mergers_dataset_orig = BinaryMergerDataset(path, 'validation', mergers = True, transform = get_transforms(aug=False), codetest=False)
+validation_nonmergers_dataset_orig = BinaryMergerDataset(path, 'validation', mergers = False, transform = get_transforms(aug=False), codetest=False)
 
 validation_dataset_full = torch.utils.data.ConcatDataset([validation_mergers_dataset_augment, validation_nonmergers_dataset_augment, validation_mergers_dataset_orig, validation_nonmergers_dataset_orig])
 validation_dataloader = DataLoader(validation_dataset_full, shuffle = True, num_workers = 1, batch_size=BATCH_SIZE)#num workers used to be 4
@@ -137,6 +139,7 @@ class ResNet(nn.Module): #inheritance --> can use anything in nn.Module NOT LIKE
     ):
         super().__init__()
         self.resnet = models.resnet18(weights=models.ResNet18_Weights.DEFAULT) #self says "this variable belongs to the class"
+        #print(self.resnet.conv1)
         # print('ORIGINAL RESNET')
         # print(self.resnet)
         #from marina:
@@ -148,19 +151,20 @@ class ResNet(nn.Module): #inheritance --> can use anything in nn.Module NOT LIKE
         # Freeze model parameters -- 7/10 look into these lines more! am i allowing weights to vary?
         for param in self.resnet.parameters():
             param.requires_grad = True
-        # self.my_model = nn.Sequential(*list(self.resnet.children())[:-3])
+        self.my_model = nn.Sequential(*list(self.resnet.children())[:-4])
         #self.resnet.fc = nn.Linear(in_channels, out_channels, bias=True) #bias is like y-intercept #add activation here
-        self.resnet.fc = nn.Sequential(torch.nn.Linear(in_channels, out_channels, bias=True), torch.nn.Sigmoid())
-        # self.my_model.avgpool = nn.AdaptiveAvgPool2d(output_size=(1,1))
-        # self.my_model.fc = nn.Sequential(torch.nn.Linear(256, 1, bias=True), torch.nn.Sigmoid())
-        # print('MODIFIED VERSION')
-        # print(self.my_model)
+        #self.resnet.fc = nn.Sequential(torch.nn.Linear(in_channels, out_channels, bias=True), torch.nn.Sigmoid())
+        self.my_model.avgpool = nn.AdaptiveAvgPool2d(output_size=(1,1))
+        self.my_model.flatten = nn.Flatten()
+        self.my_model.fc = nn.Sequential(torch.nn.Linear(128, 1, bias=True), torch.nn.Sigmoid())
+        print('MODIFIED VERSION')
+        print(self.my_model)
 
     def forward(self, x): #how a datum moves through the net
-        x = self.resnet(x) #model already has the sequence - propogate x through the network!
+        #x = self.resnet(x) #model already has the sequence - propogate x through the network!
         #print(self.my_model(x))
         #print(x)
-        #x = self.my_model(x)
+        x = self.my_model(x)
         #print model summary here 
         return x
 
@@ -184,11 +188,13 @@ model = model.to(device)
 model = model.double()
 print(model)
 
+#summary(model, (512, 1, True))
+#exit()
 #tweak model
 #model.features[0] = torch.nn.Conv2d(model.features[0].kernel_sieze, (5,5))
 #model.classifier[6] = torch.nn.Linear(model.classifier[6].in_features, 1)
 #print(model)
-NUM_EPOCHS = 50
+NUM_EPOCHS = 30
 BEST_MODEL_PATH = 'best_model.pth'
 best_accuracy = 0.0
 # training_epoch_loss = []
@@ -214,6 +220,7 @@ ax0 = fig.add_subplot(211, title="Loss")
 ax1 = fig.add_subplot(212, title="Accuracy")
 
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
+#generally start with a higher learning rate and go smaller with troubleshooting 
 
 def draw_curve(current_epoch):
     x_epoch.append(current_epoch)
@@ -223,10 +230,11 @@ def draw_curve(current_epoch):
     ax0.plot(x_epoch, modelloss['validation'], 'r', label='val')
     ax1.plot(x_epoch, modelacc['train'], 'b', label='train')
     ax1.plot(x_epoch, modelacc['validation'], 'r', label='val')
+    plt.tight_layout()
     if current_epoch == 0:
         ax0.legend()
         ax1.legend()
-    fig.savefig('metrics.png')
+    fig.savefig('metrics_lr0.0001.png')
 
 # trainingloss = 0.0
 # correct_labels_train = 0.0
@@ -268,14 +276,16 @@ for epoch in range(NUM_EPOCHS):
     #train_error_count = 0.0
     for images, labels in tqdm(iter(train_dataloader)):
         model.train(True) #default is not in training mode - need to tell pytorch to train
-        bs = images.shape[0]         #batch size
+        bs = images.shape[0]
+        #print(bs) #batch size
         images = images.to(device=device, dtype=torch.float32)
         labels = labels.to(device=device, dtype=torch.float32)
         #print(labels)
         #print(images.shape[0])
         print(images.size())
+        print('images.double() shape', np.shape(images.double()))
         outputs = model(images.double())
-        print('output shape', np.shape(outputs))
+        #print('output shape', np.shape(outputs))
         for o in range(len(outputs)):
             columndata['output_column'].append(outputs[o].item())
             columndata['label_column'].append(labels[o].item())
