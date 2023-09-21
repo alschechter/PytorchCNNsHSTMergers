@@ -15,6 +15,8 @@ from astropy.visualization import simple_norm
 from tqdm import tqdm
 #import pandas as pd
 import optuna
+from optuna.trial import TrialState
+from optuna.visualization.matplotlib import plot_param_importances, plot_contour, plot_optimization_history
 
 path = '/n/holystore01/LABS/hernquist_lab/Users/aschechter/z1mocks/'
 #stretch = AsinhStretch()
@@ -233,7 +235,10 @@ class Network(nn.Module): #inheritance --> can use anything in nn.Module NOT LIK
 load = True
 if load:
     model = Network(3)
-model.load_state_dict(torch.load('/n/home09/aschechter/code/BinaryCNNTesting/PytorchCNNs/dogsandcats/SavedModels/SimpleCNN.pt')) #, map_location=torch.device('cpu')
+if device == 'cuda':
+    model.load_state_dict(torch.load('/n/home09/aschechter/code/BinaryCNNTesting/PytorchCNNs/dogsandcats/SavedModels/SimpleCNN.pt')) #, map_location=torch.device('cpu') inside both parenthesis
+else:
+    model.load_state_dict(torch.load('/n/home09/aschechter/code/BinaryCNNTesting/PytorchCNNs/dogsandcats/SavedModels/SimpleCNN.pt', map_location=torch.device('cpu'))) #, map_location=torch.device('cpu') inside both parenthesis
     #model.eval()
 # print('loaded model')
 # print(model)
@@ -329,7 +334,7 @@ def get_accuracy(pred,original):
 
 ########### OPTUNA TRIAL ###########
 def objective(trial):
-    learning_rate = trial.suggest_loguniform("learning_rate", 1e-8, 1e-5)
+    learning_rate = trial.suggest_float("learning_rate", 1e-8, 1e-1, log = True)
     optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "AdamW", "SGD"])
     optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=learning_rate)
     
@@ -378,13 +383,52 @@ def objective(trial):
         #print('loss.item shape', np.shape(loss.item()))
         #print(modelloss['train'], np.shape(modelloss['train']))
     
-    value = get_accuracy(outputs, labels)
-    return value
+    acc = get_accuracy(outputs, labels)
+    trial.report(acc, epoch)
+    
+            # Handle pruning based on the intermediate value.
+    if trial.should_prune():
+        raise optuna.exceptions.TrialPruned()
+        
+    return acc
 
 
-study = optuna.create_study(direction= 'maximize')
-study.optimize(objective, n_trials=15)
-print(study.best_params)
+# study = optuna.create_study(direction= 'maximize')
+# study.optimize(objective, n_trials=15)
+#print(study.best_params)
+
+
+if __name__ == "__main__":
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=100, timeout=600)
+
+    pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+    complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+ 
+    print("Study statistics: ")
+    print("  Number of finished trials: ", len(study.trials))
+    print("  Number of pruned trials: ", len(pruned_trials))
+    print("  Number of complete trials: ", len(complete_trials))
+
+    print("Best trial:")
+    trial = study.best_trial
+
+    print("  Value: ", trial.value)
+
+    print("  Params: ")
+    for key, value in trial.params.items():
+        print("    {}: {}".format(key, value))
+        
+    # plt.figure()
+    # plot_optimization_history(study)
+    # plt.tight_layout()
+    # plt.savefig('Optuna_Optimization_History.png')
+    
+    # plt.figure()
+    # plot_param_importances(study)
+    # plt.tight_layout()
+    # plt.savefig('Optuna_Param_Importance.png')
 
 exit()
         # Calculate Loss
